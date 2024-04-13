@@ -1,0 +1,97 @@
+# https://raps-with-r.dev/repro_cont.html
+
+
+# Windows: your docker file name should be "Dockerfile"!!!
+
+# rocker-project: https://rocker-project.org/ - R-ready docker images
+# R-versioned
+# The first line states that we will be basing our image on the image from the Rocker project that ships with R version 4.2.2, which is the right version that we need. 
+# see needed R-Version in renv.lock
+FROM rocker/r-ver:4.2.2
+
+# Then, we install the required system-level dependencies using Ubuntu’s package manager
+RUN apt-get update && apt-get install -y \
+    libglpk-dev \
+    libxml2-dev \
+    libcairo2-dev \
+    libgit2-dev \
+    default-libmysqlclient-dev \
+    libpq-dev \
+    libsasl2-dev \
+    libsqlite3-dev \
+    libssh2-1-dev \
+    libxtst6 \
+    libcurl4-openssl-dev \
+    libharfbuzz-dev \
+    libfribidi-dev \
+    libfreetype6-dev \
+    libpng-dev \
+    libtiff5-dev \
+    libjpeg-dev \
+    libxt-dev \
+    unixodbc-dev \
+    wget \
+    pandoc
+
+# Then comes the {remotes} package. This will allow us to download a specific version from {renv} from Github, which is what we do in the next line.
+RUN R -e "install.packages('remotes')"
+
+# see needed version of renv in renv.lock: 1.0.5
+# Error in utils::download.file(url, path, method = method, quiet = quiet,  : 
+# kann URL 'https://api.github.com/repos/rstudio/renv/tarball/1.0.5' nicht öffnen
+# 0.16.0
+RUN R -e "remotes::install_github('rstudio/renv@0.16.0')"
+
+# creates a folder (mkdir stands for make directory), inside the Docker image
+RUN mkdir /home/housing
+
+# created some new directories: the pipeline_output and the shared_folder directories
+RUN mkdir /home/housing/pipeline_output
+
+RUN mkdir /home/housing/shared_folder
+
+# copies the renv.lock file from our computer (save this file next to the Dockerfile) to /home/housing/renv.lock
+# By doing this, we include the renv.lock file inside of the Docker image 
+COPY renv.lock /home/housing/renv.lock
+
+# copy all other stuff
+COPY functions /home/housing/functions
+
+COPY analyse_data.Rmd /home/housing/analyse_data.Rmd
+
+COPY _targets.R /home/housing/_targets.R
+
+# runs the R program from the Linux command line
+# Using R -e will quickly become a habit, because this is how you can run R non-interactively, from the command line.
+# restore the packages from the renv.lock file that we copied before
+RUN R -e "setwd('/home/housing');renv::init();renv::restore()"
+
+# change directories to the project’s folder
+# then use targets::tar_make() to run the pipeline
+# Notice that we do both operations within a RUN statement. This means that the pipeline will run at build-time.
+# (remember, RUN statements run at build-time, CMD statements at run-time)
+# In other words, the image will contain the outputs.
+# One last thing I had to do: I needed to change the last target in the _targets.R script. 
+# (see _targets.R line 43 : output_dir = "/home/housing/pipeline_output")
+RUN cd /home/housing && R -e "targets::tar_make()"
+
+# we move the outputs of the pipeline from the folder pipeline_output to the shared_folder
+CMD mv /home/housing/pipeline_output/* /home/housing/shared_folder/
+
+
+# now build the image using docker build -t housing_image .
+
+# run container
+# docker run housing_image
+
+# log in to the container to see if our files are there
+# log in to a bash session using
+# docker run --rm -it --name housing_container housing_image bash
+
+# then move to /home/housing/pipeline_output and run ls in that folder, you should see analyse_data.html
+# cd /home/housing/pipeline_output
+# dir
+
+# You need to run the container with the -v flag which allows you to specify the path to the shared folder on your computer, 
+# and the shared folder inside the Docker container
+# docker run --rm --name housing_container -v C:/Users/uniem/Documents/R/docker-tests/renv-housing-pipeline/shared_folder:/home/housing/shared_folder:rw housing_image
